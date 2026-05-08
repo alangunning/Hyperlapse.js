@@ -70,11 +70,51 @@
 	VoiceOrchestrator.prototype.parseCommand = function(text) {
 		var t = (text || "").toLowerCase();
 		var locationMatch;
+		var direction = null;
+		var wantsInfo = false;
+		var wantsNearbyList = false;
+		var wantsLook = false;
+		var wantsStop = false;
 
+		if (t.indexOf("left") !== -1) direction = "left";
+		else if (t.indexOf("right") !== -1) direction = "right";
+		else if (t.indexOf("up") !== -1 || t.indexOf("sky") !== -1) direction = "up";
+		else if (t.indexOf("down") !== -1 || t.indexOf("ground") !== -1) direction = "down";
+		else if (t.indexOf("ahead") !== -1 || t.indexOf("forward") !== -1 || t.indexOf("straight") !== -1) direction = "ahead";
+
+		wantsStop = t.indexOf("stop") !== -1 || t.indexOf("pause") !== -1;
+		wantsLook = t.indexOf("look") !== -1 || t.indexOf("turn") !== -1 || t.indexOf("face") !== -1;
+		wantsInfo =
+			t.indexOf("what is") !== -1 ||
+			t.indexOf("what's") !== -1 ||
+			t.indexOf("what am i looking at") !== -1 ||
+			t.indexOf("tell me about") !== -1 ||
+			t.indexOf("identify") !== -1 ||
+			t.indexOf("building") !== -1 ||
+			t.indexOf("landmark") !== -1 ||
+			t.indexOf("site") !== -1 ||
+			t.indexOf("sight") !== -1;
+		wantsNearbyList =
+			t.indexOf("what is around") !== -1 ||
+			t.indexOf("what's around") !== -1 ||
+			t.indexOf("what is nearby") !== -1 ||
+			t.indexOf("what's nearby") !== -1 ||
+			t.indexOf("places around") !== -1 ||
+			t.indexOf("places nearby") !== -1;
+
+		if (wantsNearbyList) {
+			return { type: "list_nearby_places", raw: text };
+		}
+		if (wantsInfo) {
+			return { type: "identify_view", direction: direction, pause: wantsStop, raw: text };
+		}
+		if (wantsLook && direction) {
+			return { type: "look_direction", direction: direction, pause: wantsStop, raw: text };
+		}
 		if (t.indexOf("start") !== -1 || t.indexOf("play") !== -1 || t.indexOf("continue") !== -1) {
 			return { type: "play", raw: text };
 		}
-		if (t.indexOf("stop") !== -1 || t.indexOf("pause") !== -1) {
+		if (wantsStop) {
 			return { type: "pause", raw: text };
 		}
 		if (t.indexOf("next") !== -1) {

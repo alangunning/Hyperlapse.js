@@ -4,20 +4,41 @@
 	<meta http-equiv="content-type" content="text/html; charset=UTF-8"/> 
 	<title>Viewer Example</title> 
 
-	<script src="https://maps.googleapis.com/maps/api/js?v=3.exp&sensor=false" type="text/javascript"></script> 
 	<script src="js/dat.gui.min.js"></script>
 	<script src="js/three.min.js"></script>
-	<script src="js/GSVPano.js"></script>
+	<script src="js/RoutesAdapter.js"></script>
+	<script src="../src/StreetViewTileLoader.js"></script>
 	<script src="../src/Hyperlapse.js"></script>
 	<script> 
 	
 		var start_point = new google.maps.LatLng(44.3431,6.783936);
 		var end_point = new google.maps.LatLng(44.340578,6.782684);
 		var lookat_point = new google.maps.LatLng(44.34232747290594, 6.786460550292986);
-		var map, directions_renderer, directions_service, streetview_service, geocoder;
+		var map, route_line, streetview_service, geocoder;
 		var start_pin, end_pin, pivot_pin, camera_pin;
 		var _elevation = 0;
 		var _route_markers = [];
+
+		function getQueryParam(name) {
+			var params = new URLSearchParams(window.location.search);
+			return params.get(name);
+		}
+
+		function loadGoogleMaps(callback) {
+			var key = getQueryParam("key");
+			var script = document.createElement("script");
+
+			if (!key) {
+				show("Missing API key. Open this page with <code>?key=YOUR_GOOGLE_MAPS_API_KEY</code>.");
+				return;
+			}
+
+			window.__hyperlapseViewerInit = callback;
+			script.src = "https://maps.googleapis.com/maps/api/js?key=" +
+				encodeURIComponent(key) + "&v=weekly&loading=async&libraries=geometry&callback=__hyperlapseViewerInit";
+			script.async = true;
+			document.head.appendChild(script);
+		}
 
 		function show(msg) {
 			document.getElementById("text").innerHTML = msg;
@@ -36,10 +57,11 @@
 			/* Map */
 
 			function snapToRoad(point, callback) {
-				var request = { origin: point, destination: point, travelMode: google.maps.TravelMode["DRIVING"] };
-				directions_service.route(request, function(response, status) {
-					if(status=="OK") callback(response.routes[0].overview_path[0]);
-					else callback(null);
+				var request = { origin: point, destination: point, travelMode: "DRIVING" };
+				GoogleRoutesAdapter.computeRoute(request).then(function(response) {
+					callback(response.routes[0].overview_path[0]);
+				}).catch(function() {
+					callback(point);
 				});
 			}
 
@@ -61,11 +83,6 @@
 
 			var overlay = new google.maps.StreetViewCoverageLayer();
 			overlay.setMap(map);
-
-			directions_service = new google.maps.DirectionsService();
-			directions_renderer = new google.maps.DirectionsRenderer({draggable:false, markerOptions:{visible: false}});
-			directions_renderer.setMap(map);
-			directions_renderer.setOptions({preserveViewport:true});
 
 			camera_pin = new google.maps.Marker({
 				position: start_point,
@@ -113,7 +130,7 @@
 
 			function findAddress(address) {
 				geocoder.geocode( { 'address': address}, function(results, status) {
-					if (status == google.maps.GeocoderStatus.OK) {
+					if (status == "OK") {
 						map.setCenter(results[0].geometry.location);
 						o.drop_pins();
 					} else {
@@ -146,7 +163,8 @@
 				use_lookat: true,
 				distance_between_points: 5,
 				max_points: 100,
-				elevation: _elevation
+				elevation: _elevation,
+				streetViewApiKey: getQueryParam("key")
 			});
 			
 			
@@ -166,7 +184,16 @@
 			};
 
 			hyperlapse.onRouteComplete = function(e) {
-				directions_renderer.setDirections(e.response);
+				if (route_line) {
+					route_line.setMap(null);
+				}
+				route_line = new google.maps.Polyline({
+					path: e.response.routes[0].overview_path,
+					map: map,
+					strokeColor: "#0067ff",
+					strokeOpacity: 0.85,
+					strokeWeight: 5
+				});
 				show( "Number of Points: "+ hyperlapse.length() );
 				hyperlapse.load();
 			};
@@ -252,7 +279,10 @@
 				generate:function(){
 					show( "Generating route..." );
 
-					directions_renderer.setDirections({routes: []});
+					if (route_line) {
+						route_line.setMap(null);
+						route_line = null;
+					}
 
 					var marker;
 					while(_route_markers.length > 0) {
@@ -263,15 +293,13 @@
 					request = {
 						origin: start_point, 
 						destination: end_point, 
-						travelMode: google.maps.DirectionsTravelMode.DRIVING
+						travelMode: "DRIVING"
 					};
 
-					directions_service.route(request, function(response, status) {
-						if (status == google.maps.DirectionsStatus.OK) {   
-							hyperlapse.generate({route: response});
-						} else {
-							console.log(status);
-						}
+					GoogleRoutesAdapter.computeRoute(request).then(function(response) {
+						hyperlapse.generate({route: response});
+					}).catch(function(error) {
+						console.log(error.message);
 					})
 				},
 				drop_pins:function(){
@@ -416,7 +444,9 @@
 			o.generate();
 		}
 
-		window.onload = init;
+		window.onload = function() {
+			loadGoogleMaps(init);
+		};
 	</script> 
 </head> 
 <body> 

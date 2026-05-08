@@ -1,0 +1,102 @@
+{
+  "origin": {
+    "lat": 53.347875,
+    "lng": -6.228956
+  },
+  "destination": {
+    "lat": 53.3465,
+    "lng": -6.29275
+  },
+  "travelMode": "DRIVING",
+  "viewMode": "follow",
+  "motionQuality": "cinematic",
+  "speedMetersPerSecond": 8,
+  "distance_between_points": 2,
+  "max_points": 450,
+  "millis": 700,
+  "prompt": "start at the three arena in Dublin on the road next to the Liffey and travel to Heuston station while looking at significant landmarks of historical importance",
+  "waypoints": [
+    {
+      "lat": 53.34762,
+      "lng": -6.2407,
+      "purpose": "keep route beside the Liffey through the Docklands",
+      "viewHint": "look toward Samuel Beckett Bridge and the river corridor",
+      "routeVia": true
+    },
+    {
+      "lat": 53.34805,
+      "lng": -6.252,
+      "purpose": "historic civic landmark camera target",
+      "viewHint": "look toward the Custom House and Famine Memorial",
+      "routeVia": false
+    },
+    {
+      "lat": 53.34756,
+      "lng": -6.27343,
+      "purpose": "keep the route on the north quays past the Four Courts",
+      "viewHint": "look toward the Four Courts",
+      "routeVia": true
+    },
+    {
+      "lat": 53.3472,
+      "lng": -6.2591,
+      "purpose": "central Liffey crossing camera target",
+      "viewHint": "look toward O'Connell Bridge, Ha'penny Bridge, and the quays",
+      "routeVia": false
+    },
+    {
+      "lat": 53.3477,
+      "lng": -6.2862,
+      "purpose": "military and civic history near Heuston camera target",
+      "viewHint": "look toward Collins Barracks and Croppies Acre",
+      "routeVia": false
+    }
+  ],
+  "cameraCues": [
+    {
+      "from": 0,
+      "to": 0.2,
+      "label": "Samuel Beckett Bridge",
+      "lookat": {
+        "lat": 53.34795,
+        "lng": -6.2391
+      }
+    },
+    {
+      "from": 0.2,
+      "to": 0.4,
+      "label": "Custom House and Famine Memorial",
+      "lookat": {
+        "lat": 53.34805,
+        "lng": -6.252
+      }
+    },
+    {
+      "from": 0.4,
+      "to": 0.6,
+      "label": "O'Connell Bridge and Ha'penny Bridge",
+      "lookat": {
+        "lat": 53.3472,
+        "lng": -6.2591
+      }
+    },
+    {
+      "from": 0.6,
+      "to": 0.82,
+      "label": "Four Courts",
+      "lookat": {
+        "lat": 53.34805,
+        "lng": -6.2733
+      }
+    },
+    {
+      "from": 0.82,
+      "to": 1,
+      "label": "Collins Barracks and Heuston",
+      "lookat": {
+        "lat": 53.3477,
+        "lng": -6.2862
+      }
+    }
+  ]
+}

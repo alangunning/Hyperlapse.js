@@ -1,0 +1,24 @@
+{
+  "name": "hyperlapse-js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "JavaScript hyper-lapse utility for Google Street View.",
+  "scripts": {
+    "build:three": "esbuild node_modules/three/build/three.module.js --bundle --format=iife --global-name=THREE --minify --outfile=examples/js/three.min.js",
+    "build:hyperlapse": "terser src/StreetViewTileLoader.js src/Hyperlapse.js --compress --mangle --output build/hyperlapse.min.js",
+    "build": "npm run build:three && npm run build:hyperlapse",
+    "demo:route": "node scripts/launch-demo.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "validate:plugin": "node scripts/validate-plugin.mjs"
+  },
+  "dependencies": {
+    "three": "0.184.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.59.1",
+    "esbuild": "^0.25.4",
+    "terser": "^5.39.0"
+  }
+}

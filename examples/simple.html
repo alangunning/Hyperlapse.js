@@ -3,19 +3,41 @@
 <head> 
 	<title>Simple Example</title> 
 
-	<script src="https://maps.googleapis.com/maps/api/js?v=3.exp&sensor=false" type="text/javascript"></script> 
 	<script src="js/three.min.js"></script>
-	<script src="js/GSVPano.js"></script>
+	<script src="js/RoutesAdapter.js"></script>
+	<script src="../src/StreetViewTileLoader.js"></script>
 	<script src="../src/Hyperlapse.js"></script>
 	<script> 
+		function getQueryParam(name) {
+			var params = new URLSearchParams(window.location.search);
+			return params.get(name);
+		}
+
+		function loadGoogleMaps(callback) {
+			var key = getQueryParam("key");
+			var script = document.createElement("script");
+
+			if (!key) {
+				console.log("Missing API key. Open with ?key=YOUR_GOOGLE_MAPS_API_KEY.");
+				return;
+			}
+
+			window.__hyperlapseSimpleInit = callback;
+			script.src = "https://maps.googleapis.com/maps/api/js?key=" +
+				encodeURIComponent(key) + "&v=weekly&loading=async&libraries=geometry&callback=__hyperlapseSimpleInit";
+			script.async = true;
+			document.head.appendChild(script);
+		}
 
 		function init() {
+			var key = getQueryParam("key");
 
 			var hyperlapse = new Hyperlapse(document.getElementById('pano'), {
 				lookat: new google.maps.LatLng(37.81409525128964,-122.4775045005249),
 				zoom: 1,
 				use_lookat: true,
-				elevation: 50
+				elevation: 50,
+				streetViewApiKey: key
 			});
 
 			hyperlapse.onError = function(e) {
@@ -31,27 +53,25 @@
 			};
 
 			// Google Maps API stuff here...
-			var directions_service = new google.maps.DirectionsService();
-
 			var route = {
 				request:{
 					origin: new google.maps.LatLng(37.816480000000006,-122.47825,37),
 					destination: new google.maps.LatLng(37.81195,-122.47773000000001),
-					travelMode: google.maps.DirectionsTravelMode.DRIVING
+					travelMode: "DRIVING"
 				}
 			};
 
-			directions_service.route(route.request, function(response, status) {
-				if (status == google.maps.DirectionsStatus.OK) {
-					hyperlapse.generate( {route:response} );
-				} else {
-					console.log(status);
-				}
+			GoogleRoutesAdapter.computeRoute(route.request).then(function(response) {
+				hyperlapse.generate( {route:response} );
+			}).catch(function(error) {
+				console.log(error.message);
 			});
 
 		}
 
-		window.onload = init;
+		window.onload = function() {
+			loadGoogleMaps(init);
+		};
 		
 	</script> 
 </head> 
