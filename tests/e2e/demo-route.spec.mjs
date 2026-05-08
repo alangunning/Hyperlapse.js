@@ -235,6 +235,13 @@ test.describe("Hyperlapse demo route", () => {
 		await expect.poll(() => page.evaluate(() => window.hyperlapseDemoApp.hyperlapse.isPlaying())).toBe(false);
 		await expect(page.locator("#player-overlay")).toHaveAttribute("data-state", "ready");
 		await expect(page.locator("#player-toggle")).toBeEnabled();
+		await expect(page.locator("#player-menu")).toHaveAttribute("aria-expanded", "false");
+		await page.locator("#player-menu-button").click();
+		await expect(page.locator("#player-menu")).toHaveAttribute("aria-expanded", "true");
+		await expect(page.locator("#player-menu-button")).toHaveAttribute("aria-expanded", "true");
+		await expect(page.locator("#download-video")).toBeEnabled();
+		await page.keyboard.press("Escape");
+		await expect(page.locator("#player-menu")).toHaveAttribute("aria-expanded", "false");
 		await expect(page.locator("#status")).not.toContainText(/Initializing|Demo initialization failed|Still waiting|Could not load/i);
 
 		const desktopLayout = await page.evaluate(() => {

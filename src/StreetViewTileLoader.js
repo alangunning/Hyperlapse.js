@@ -13,12 +13,74 @@ var StreetViewTileLoader = function(parameters) {
 		_language = _parameters.language || "en-US",
 		_region = _parameters.region || "US",
 		_radius = _parameters.radius || 50,
-		_tile_retries = typeof _parameters.tileRetries === "number" ? _parameters.tileRetries : 6,
-		_request_spacing_ms = typeof _parameters.requestSpacingMillis === "number" ? _parameters.requestSpacingMillis : 125,
+		_static_base_url = _parameters.staticBaseUrl || "",
+		_image_source_mode = _parameters.imageSourceMode || "auto",
+		_tile_retries = typeof _parameters.tileRetries === "number" ? _parameters.tileRetries : 0,
+		_metadata_retries = typeof _parameters.metadataRetries === "number" ? _parameters.metadataRetries : 2,
+		_request_spacing_ms = typeof _parameters.requestSpacingMillis === "number" ? _parameters.requestSpacingMillis : 0,
 		_last_request_at = 0,
 		_canvas = document.createElement("canvas"),
 		_ctx = _canvas.getContext("2d"),
 		_metadata_by_pano = {};
+
+	function todayKey() {
+		return new Date().toISOString().slice(0, 10);
+	}
+
+	function defaultQuotaState() {
+		return {
+			date: todayKey(),
+			tileRequests: 0,
+			tileSuccesses: 0,
+			tile429s: 0,
+			staticFallbacks: 0,
+			lastStatus: null,
+			likelyDailyQuotaExhausted: false,
+			lastUpdatedAt: 0
+		};
+	}
+
+	function storage() {
+		return typeof window !== "undefined" ? window.localStorage : null;
+	}
+
+	function readQuotaState() {
+		var key = "hyperlapse.mapTilesQuota." + todayKey();
+		var state;
+
+		try {
+			state = JSON.parse(storage() && storage().getItem(key));
+		} catch(e) {
+			state = null;
+		}
+		if (!state || state.date !== todayKey()) {
+			state = defaultQuotaState();
+		}
+		return state;
+	}
+
+	function writeQuotaState(state) {
+		var key = "hyperlapse.mapTilesQuota." + todayKey();
+
+		state.lastUpdatedAt = Date.now();
+		try {
+			if (storage()) {
+				storage().setItem(key, JSON.stringify(state));
+			}
+		} catch(e) {}
+		return state;
+	}
+
+	function updateQuotaState(updater) {
+		var state = readQuotaState();
+
+		updater(state);
+		writeQuotaState(state);
+		if (this.onQuotaUpdate) {
+			this.onQuotaUpdate(state);
+		}
+		return state;
+	}
 
 	function clampZoom(zoom) {
 		return Math.max(0, Math.min(5, Math.floor(zoom)));
@@ -48,6 +110,26 @@ var StreetViewTileLoader = function(parameters) {
 		});
 	}
 
+	function drawPlaceholder(width, height, message) {
+		_canvas.width = Math.max(512, width || 512);
+		_canvas.height = Math.max(256, height || 256);
+		_ctx.save();
+		_ctx.setTransform(1, 0, 0, 1, 0, 0);
+		_ctx.fillStyle = "#222";
+		_ctx.fillRect(0, 0, _canvas.width, _canvas.height);
+		_ctx.fillStyle = "#333";
+		_ctx.fillRect(0, 0, _canvas.width, _canvas.height / 2);
+		_ctx.fillStyle = "#fff";
+		_ctx.font = "24px Arial, sans-serif";
+		_ctx.textAlign = "center";
+		_ctx.fillText("Street View frame unavailable", _canvas.width / 2, _canvas.height / 2 - 12);
+		_ctx.font = "16px Arial, sans-serif";
+		_ctx.fillStyle = "#d0d7de";
+		_ctx.fillText(message || "Retry later or lower the route density.", _canvas.width / 2, _canvas.height / 2 + 20);
+		_ctx.restore();
+		this.canvas = _canvas;
+	}
+
 	function requestJson(url, options) {
 		return throttledFetch(url, options).then(function(response) {
 			if (!response.ok) {
@@ -72,8 +154,21 @@ var StreetViewTileLoader = function(parameters) {
 		});
 	}
 
-	function requestBlob(url) {
+	function requestBlob(url, options) {
+		options = options || {};
 		return throttledFetch(url).then(function(response) {
+			if (options.mapTiles) {
+				updateQuotaState.call(options.owner, function(state) {
+					state.tileRequests++;
+					state.lastStatus = response.status;
+					if (response.status === 429) {
+						state.tile429s++;
+						state.likelyDailyQuotaExhausted = true;
+					} else if (response.ok) {
+						state.tileSuccesses++;
+					}
+				});
+			}
 			if (!response.ok) {
 				throw requestError(response);
 			}
@@ -95,8 +190,60 @@ var StreetViewTileLoader = function(parameters) {
 			"&panoId=" + encodeURIComponent(panoId);
 	}
 
-	function loadTileImage(url) {
-		return requestBlob(url).then(function(blob) {
+	function staticFallbackUrl(metadata) {
+		var params;
+
+		if (!_static_base_url || !metadata || typeof metadata.lat === "undefined" || typeof metadata.lng === "undefined") {
+			return "";
+		}
+		params = new URLSearchParams({
+			lat: metadata.lat,
+			lng: metadata.lng,
+			heading: metadata.heading || 0,
+			pitch: 0,
+			fov: 90,
+			size: "640x320"
+		});
+		return _static_base_url + "?" + params.toString();
+	}
+
+	function staticImage(metadata, message, self, onUnavailable) {
+		var url = staticFallbackUrl(metadata);
+
+		if (!url) {
+			onUnavailable(message);
+			return;
+		}
+		loadTileImage(url).then(function(img) {
+			_canvas.width = 640;
+			_canvas.height = 320;
+			_ctx.save();
+			_ctx.setTransform(1, 0, 0, 1, 0, 0);
+			_ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+			_ctx.drawImage(img, 0, 0, _canvas.width, _canvas.height);
+			_ctx.restore();
+			self.canvas = _canvas;
+			self.placeholder = false;
+			self.staticFallback = _image_source_mode !== "static";
+			self.staticOnly = _image_source_mode === "static";
+			updateQuotaState.call(self, function(state) {
+				if (_image_source_mode !== "static") {
+					state.staticFallbacks++;
+				}
+			});
+			if (self.onPanoramaFallback) {
+				self.onPanoramaFallback({ message: message, sourceMode: _image_source_mode });
+			}
+			if (self.onPanoramaLoad) {
+				self.onPanoramaLoad();
+			}
+		}).catch(function() {
+			onUnavailable(message);
+		});
+	}
+
+	function loadTileImage(url, options) {
+		return requestBlob(url, options).then(function(blob) {
 			return new Promise(function(resolve, reject) {
 				var img = new Image(),
 					objectUrl = URL.createObjectURL(blob);
@@ -114,8 +261,8 @@ var StreetViewTileLoader = function(parameters) {
 		});
 	}
 
-	function loadTileWithRetry(url, retries) {
-		return loadTileImage(url).catch(function(error) {
+	function loadTileWithRetry(url, retries, owner) {
+		return loadTileImage(url, { mapTiles: true, owner: owner }).catch(function(error) {
 			var retryDelay;
 
 			if (retries <= 0) {
@@ -128,7 +275,7 @@ var StreetViewTileLoader = function(parameters) {
 				_last_request_at = Math.max(_last_request_at, Date.now() + retryDelay);
 			}
 			return delay(retryDelay).then(function() {
-				return loadTileWithRetry(url, retries - 1);
+				return loadTileWithRetry(url, retries - 1, owner);
 			});
 		});
 	}
@@ -157,6 +304,18 @@ var StreetViewTileLoader = function(parameters) {
 		_zoom = clampZoom(zoom);
 	};
 
+	this.setImageSourceMode = function(mode) {
+		_image_source_mode = mode === "static" || mode === "tiles" ? mode : "auto";
+	};
+
+	this.getImageSourceMode = function() {
+		return _image_source_mode;
+	};
+
+	this.getQuotaState = function() {
+		return readQuotaState();
+	};
+
 	this.ensureSession = function() {
 		requireApiKey();
 
@@ -164,7 +323,7 @@ var StreetViewTileLoader = function(parameters) {
 			return Promise.resolve(_session);
 		}
 
-		return requestJsonWithRetry("https://tile.googleapis.com/v1/createSession?key=" + encodeURIComponent(_api_key), {
+			return requestJsonWithRetry("https://tile.googleapis.com/v1/createSession?key=" + encodeURIComponent(_api_key), {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -172,7 +331,7 @@ var StreetViewTileLoader = function(parameters) {
 				language: _language,
 				region: _region
 			})
-		}, _tile_retries).then(function(response) {
+		}, _metadata_retries).then(function(response) {
 			_session = response.session;
 			_session_expiry = parseInt(response.expiry, 10) || 0;
 			return _session;
@@ -198,7 +357,7 @@ var StreetViewTileLoader = function(parameters) {
 					"&radius=" + encodeURIComponent(_radius);
 			}
 
-			return requestJsonWithRetry(url, null, _tile_retries).then(function(metadata) {
+			return requestJsonWithRetry(url, null, _metadata_retries).then(function(metadata) {
 				if (!metadata || !metadata.panoId) {
 					throw new Error("No Street View panorama found.");
 				}
@@ -240,9 +399,36 @@ var StreetViewTileLoader = function(parameters) {
 			_ctx.drawImage(temp_canvas, 0, 0, image_width, image_height, 0, 0, _canvas.width, _canvas.height);
 			_ctx.restore();
 			self.canvas = _canvas;
+			self.placeholder = false;
+			self.staticFallback = false;
+			self.staticOnly = false;
 			if (self.onPanoramaLoad) {
 				self.onPanoramaLoad();
 			}
+		}
+
+		function placeholder(message) {
+			if (failed) return;
+			failed = true;
+			drawPlaceholder.call(self, image_width, Math.max(1, Math.round(image_width / 2)), message);
+			self.placeholder = true;
+			self.staticFallback = false;
+			self.staticOnly = false;
+			if (self.onPanoramaPlaceholder) {
+				self.onPanoramaPlaceholder({ message: message });
+			}
+			if (self.onPanoramaLoad) {
+				self.onPanoramaLoad();
+			}
+		}
+
+		function staticFallback(message) {
+			if (failed) return;
+			failed = true;
+			staticImage(metadata, message, self, function(unavailableMessage) {
+				failed = false;
+				placeholder(unavailableMessage);
+			});
 		}
 
 		function tileComplete() {
@@ -253,19 +439,27 @@ var StreetViewTileLoader = function(parameters) {
 			}
 		}
 
+		if (_image_source_mode === "static") {
+			staticFallback("Using Street View Static source for this frame.");
+			return;
+		}
+
 			this.ensureSession().then(function(session) {
 				for (var y = 0; y < tiles_y; y++) {
 					for (var x = 0; x < tiles_x; x++) {
 						(function(tile_x, tile_y) {
-							loadTileWithRetry(tileUrl(session, metadata.panoId, tile_x, tile_y), _tile_retries).then(function(img) {
+							loadTileWithRetry(tileUrl(session, metadata.panoId, tile_x, tile_y), _tile_retries, self).then(function(img) {
 								if (failed) {
 									return;
 								}
 								temp_ctx.drawImage(img, tile_x * tile_width, tile_y * tile_height);
 								tileComplete();
 							}).catch(function(error) {
-								failed = true;
-								self.throwError("Could not load Street View tile " + tile_x + "," + tile_y + ": " + error.message);
+								if (_image_source_mode === "tiles") {
+									placeholder("Could not load Street View tile " + tile_x + "," + tile_y + ": " + error.message);
+								} else {
+									staticFallback("Could not load Street View tile " + tile_x + "," + tile_y + ": " + error.message);
+								}
 							});
 						})(x, y);
 					}

@@ -104,6 +104,13 @@ function sendJson(response, status, payload) {
 	response.end(JSON.stringify(payload));
 }
 
+function numericQuery(value, fallback, min, max) {
+	const parsed = Number(value);
+
+	if (!Number.isFinite(parsed)) return fallback;
+	return Math.max(min, Math.min(max, parsed));
+}
+
 function openAICommandSchema() {
 	return {
 		type: "object",
@@ -325,7 +332,50 @@ function handleOpenAIConfig(response, openAIConfig) {
 	});
 }
 
-function serveStatic(request, response, openAIConfig) {
+async function handleStreetViewStatic(request, response, googleApiKey) {
+	const requestUrl = new URL(request.url, `http://${host}:${port}`);
+	const lat = numericQuery(requestUrl.searchParams.get("lat"), null, -90, 90);
+	const lng = numericQuery(requestUrl.searchParams.get("lng"), null, -180, 180);
+	const heading = numericQuery(requestUrl.searchParams.get("heading"), 0, 0, 360);
+	const pitch = numericQuery(requestUrl.searchParams.get("pitch"), 0, -90, 90);
+	const fov = numericQuery(requestUrl.searchParams.get("fov"), 90, 10, 120);
+	const size = requestUrl.searchParams.get("size") || "640x320";
+	let upstream;
+	let body;
+
+	if (request.method !== "GET") {
+		sendJson(response, 405, { error: "Method not allowed" });
+		return;
+	}
+	if (lat === null || lng === null || !/^\d{2,4}x\d{2,4}$/.test(size)) {
+		sendJson(response, 400, { error: "Missing or invalid Street View Static request parameters." });
+		return;
+	}
+
+	upstream = await fetch("https://maps.googleapis.com/maps/api/streetview?" + new URLSearchParams({
+		key: googleApiKey,
+		size,
+		location: `${lat},${lng}`,
+		heading: String(heading),
+		pitch: String(pitch),
+		fov: String(fov),
+		source: "outdoor"
+	}).toString());
+
+	if (!upstream.ok) {
+		sendJson(response, upstream.status, { error: `Street View Static API failed with HTTP ${upstream.status}.` });
+		return;
+	}
+
+	body = Buffer.from(await upstream.arrayBuffer());
+	response.writeHead(200, {
+		"Content-Type": upstream.headers.get("content-type") || "image/jpeg",
+		"Cache-Control": "public, max-age=300"
+	});
+	response.end(body);
+}
+
+function serveStatic(request, response, openAIConfig, googleApiKey) {
 	const url = new URL(request.url, `http://${host}:${port}`);
 	let pathname = decodeURIComponent(url.pathname);
 	let filePath;
@@ -343,6 +393,12 @@ function serveStatic(request, response, openAIConfig) {
 	}
 	if (pathname === "/api/openai/guide-answer") {
 		handleOpenAIGuideAnswer(request, response, openAIConfig).catch((error) => {
+			sendJson(response, 500, { error: error.message });
+		});
+		return;
+	}
+	if (pathname === "/api/google/streetview-static") {
+		handleStreetViewStatic(request, response, googleApiKey).catch((error) => {
 			sendJson(response, 500, { error: error.message });
 		});
 		return;
@@ -376,8 +432,8 @@ function serveStatic(request, response, openAIConfig) {
 	createReadStream(filePath).pipe(response);
 }
 
-function startServer(openAIConfig) {
-	const server = createServer((request, response) => serveStatic(request, response, openAIConfig));
+function startServer(openAIConfig, googleApiKey) {
+	const server = createServer((request, response) => serveStatic(request, response, openAIConfig, googleApiKey));
 
 	return new Promise((resolveServer, reject) => {
 		server.once("error", (error) => {
@@ -405,7 +461,7 @@ function openUrl(url) {
 const fileValues = await loadEnvValues();
 const apiKey = await loadApiKey(fileValues);
 const openAIConfig = optionalOpenAIConfig(fileValues);
-const server = await startServer(openAIConfig);
+const server = await startServer(openAIConfig, apiKey);
 const url = `http://${host}:${port}/examples/demo-route.html?key=${encodeURIComponent(apiKey)}&planUrl=${encodeURIComponent(plan)}`;
 
 if (!noOpen) {

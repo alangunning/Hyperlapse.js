@@ -12,7 +12,8 @@
   "motionQuality": "cinematic",
   "speedMetersPerSecond": 9,
   "distance_between_points": 2,
-  "max_points": 90,
+  "max_points": 28,
+  "streetViewTileZoom": 0,
   "millis": 700,
   "prompt": "start at the 3Arena in Dublin and travel along the quays to O'Connell Street",
   "waypoints": [

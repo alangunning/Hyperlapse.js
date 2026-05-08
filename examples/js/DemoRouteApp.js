@@ -24,6 +24,7 @@
 		this.currentPlan = null;
 		this.routeSettingsDirty = false;
 		this.reloadingTiles = false;
+		this.pendingDownloadName = null;
 
 		this.hyperlapse = new Hyperlapse(this.pano, {
 			width: 960,
@@ -31,9 +32,11 @@
 			lookat: new google.maps.LatLng(53.349164, -6.227734),
 			use_lookat: false,
 			follow_route: true,
-			zoom: 1,
+			zoom: 0,
 			millis: 560,
 			streetViewApiKey: options.apiKey,
+			streetViewStaticBaseUrl: "/api/google/streetview-static",
+			streetViewSourceMode: "auto",
 			preserveDrawingBuffer: true
 		});
 
@@ -101,6 +104,53 @@
 		byId("tour-info").textContent = message || "";
 	};
 
+	DemoRouteApp.prototype.updateMapTilesQuotaStatus = function(state) {
+		var element = byId("quota-state");
+		var message;
+
+		if (!element || !state) return;
+		if (state.likelyDailyQuotaExhausted) {
+			message = "Map Tiles quota warning: Street View Tiles requests are returning 429. The daily Map Tiles quota is likely exhausted for " + state.date + ". Using Street View Static fallback imagery where available.";
+		} else if (state.tileRequests) {
+			message = "Map Tiles today: " + state.tileRequests + " tile requests, " + state.tile429s + " throttled, " + state.staticFallbacks + " static fallbacks.";
+		} else {
+			message = "";
+		}
+		element.textContent = message;
+	};
+
+	DemoRouteApp.prototype.updateImagerySourceStatus = function() {
+		var element = byId("source-state");
+		var mode = byId("streetview-source") ? byId("streetview-source").value : "auto";
+		var length = this.hyperlapse && this.hyperlapse.length ? this.hyperlapse.length() : 0;
+		var staticOnly = 0;
+		var staticFallbacks = 0;
+		var placeholders = 0;
+		var point;
+		var i;
+		var message;
+
+		if (!element) return;
+		for (i = 0; i < length; i++) {
+			point = this.hyperlapse.getPointAt ? this.hyperlapse.getPointAt(i) : null;
+			if (!point) continue;
+			if (point.staticOnly) staticOnly++;
+			if (point.staticFallback) staticFallbacks++;
+			if (point.placeholder) placeholders++;
+		}
+		if (mode === "static") {
+			message = "Imagery source: Street View Static only. Map Tiles tile quota is not used for frame imagery.";
+		} else if (mode === "tiles") {
+			message = "Imagery source: Map Tiles only. Static fallback is disabled, so exhausted tile quota can produce unavailable frames.";
+		} else {
+			message = "Imagery source: Auto. Uses Map Tiles first, then Street View Static when tile imagery is unavailable.";
+		}
+		if (staticFallbacks || staticOnly || placeholders) {
+			message += " Loaded: " + staticOnly + " static-only, " + staticFallbacks + " static fallback, " + placeholders + " unavailable.";
+		}
+		element.textContent = message;
+	};
+
 	DemoRouteApp.prototype.setPlayerOverlay = function(state, message) {
 		var overlay = byId("player-overlay");
 		var button = byId("player-toggle");
@@ -119,6 +169,7 @@
 			button.setAttribute("aria-label", "Play hyperlapse");
 			if (icon) icon.textContent = "▶";
 		}
+		this.updateDownloadAvailability();
 	};
 
 	DemoRouteApp.prototype.togglePlayer = function() {
@@ -128,6 +179,56 @@
 		} else {
 			this.hyperlapse.playForward();
 		}
+	};
+
+	DemoRouteApp.prototype.updateDownloadAvailability = function() {
+		var button = byId("download-video");
+		var playable = this.hyperlapse && this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : 0;
+
+		if (!button) return;
+		button.disabled = !playable || this.hyperlapse.isRecording();
+		button.textContent = this.hyperlapse.isRecording() ? "Recording..." : "Download video";
+	};
+
+	DemoRouteApp.prototype.downloadVideo = function() {
+		var playable = this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : 0;
+		var duration;
+		var started;
+
+		if (!playable || this.hyperlapse.isRecording()) return;
+		this.pendingDownloadName = "hyperlapse-demo-route.webm";
+		this.hyperlapse.seek(0);
+		started = this.hyperlapse.startRecording({
+			frameRate: 30,
+			videoBitsPerSecond: 3000000
+		});
+		if (!started) {
+			this.pendingDownloadName = null;
+			return;
+		}
+		this.setStatus("Recording loaded hyperlapse frames for download...");
+		this.updateDownloadAvailability();
+		this.hyperlapse.playForward();
+		duration = Math.max(1200, playable * this.hyperlapse.millis + 900);
+		global.setTimeout(function() {
+			this.hyperlapse.pause();
+			this.hyperlapse.stopRecording();
+		}.bind(this), duration);
+	};
+
+	DemoRouteApp.prototype.setPlayerMenuOpen = function(open) {
+		var menu = byId("player-menu");
+		var button = byId("player-menu-button");
+
+		if (!menu || !button) return;
+		menu.setAttribute("aria-expanded", open ? "true" : "false");
+		button.setAttribute("aria-expanded", open ? "true" : "false");
+		button.setAttribute("aria-label", open ? "Close player menu" : "Open player menu");
+	};
+
+	DemoRouteApp.prototype.isPlayerMenuOpen = function() {
+		var menu = byId("player-menu");
+		return !!(menu && menu.getAttribute("aria-expanded") === "true");
 	};
 
 	DemoRouteApp.prototype.getCurrentImageDataUrl = function() {
@@ -291,7 +392,7 @@
 	};
 
 	DemoRouteApp.prototype.setRouteControlsEnabled = function(enabled) {
-		["timeline", "play", "reverse", "next", "prev", "tile-quality", "distance-between-points", "travel-mode", "motion-quality", "run-prompt", "apply-route-settings"].forEach(function(id) {
+		["timeline", "play", "reverse", "next", "prev"].forEach(function(id) {
 			var element = byId(id);
 			if (element) element.disabled = !enabled;
 		});
@@ -313,17 +414,19 @@
 
 	DemoRouteApp.prototype.updateTimeline = function(position) {
 		var timeline = byId("timeline");
-		var max = Math.max(0, this.hyperlapse.length() - 1);
+		var playable = this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : this.hyperlapse.length();
+		var max = Math.max(0, playable - 1);
 
 		timeline.max = max;
 		if (!this.seeking) {
 			timeline.value = Math.max(0, Math.min(max, position || 0));
 		}
-		byId("frame-readout").textContent = this.hyperlapse.length() ? (Number(timeline.value) + 1) + " / " + this.hyperlapse.length() : "0 / 0";
+		byId("frame-readout").textContent = playable ? (Number(timeline.value) + 1) + " / " + playable + (playable < this.hyperlapse.length() ? " loaded of " + this.hyperlapse.length() : "") : "0 / 0";
 	};
 
 	DemoRouteApp.prototype.configureTimeline = function() {
-		byId("timeline").disabled = this.hyperlapse.length() === 0;
+		var playable = this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : this.hyperlapse.length();
+		byId("timeline").disabled = playable === 0;
 		this.updateTimeline(this.hyperlapse.getPosition());
 	};
 
@@ -367,6 +470,7 @@
 		if (plan.motionQuality) byId("motion-quality").value = plan.motionQuality;
 		if (plan.distance_between_points) byId("distance-between-points").value = Number(plan.distance_between_points);
 		if (plan.streetViewTileZoom || plan.streetViewTileZoom === 0) byId("tile-quality").value = String(plan.streetViewTileZoom);
+		if (plan.streetViewSourceMode) byId("streetview-source").value = plan.streetViewSourceMode;
 		if (plan.millis) {
 			this.playbackBaseMillis = Number(plan.millis);
 			byId("speed").value = 1;
@@ -387,6 +491,7 @@
 		next.max_points = next.max_points || qualityDefaults.max_points;
 		next.speedMetersPerSecond = next.speedMetersPerSecond || defaults.speedMetersPerSecond;
 		next.streetViewTileZoom = Number(byId("tile-quality").value);
+		next.streetViewSourceMode = byId("streetview-source").value;
 		next.prompt = byId("prompt").value || next.prompt;
 		return next;
 	};
@@ -398,6 +503,8 @@
 		this.currentPlan = plan;
 		this.hyperlapse.setDistanceBetweenPoint(plan.distance_between_points);
 		this.hyperlapse.setTileZoom(plan.streetViewTileZoom);
+		this.hyperlapse.setStreetViewSourceMode(plan.streetViewSourceMode);
+		this.updateImagerySourceStatus();
 		this.updateSamplingLabel();
 		this.applySpeed();
 		this.applyViewMode(plan.viewMode);
@@ -444,6 +551,7 @@
 		this.configureTimeline();
 		this.applyViewMode(byId("view-mode").value);
 		this.updateModeWarning(byId("travel-mode").value);
+		this.updateImagerySourceStatus();
 		this.clearRouteSettingsDirty();
 	};
 
@@ -458,6 +566,7 @@
 			this.updateRouteMarker(event);
 			this.applyCameraCue(event);
 			this.tourGuide.prefetchCurrentView();
+			this.updateDownloadAvailability();
 		}.bind(this));
 
 		this.hyperlapse.addEventListener("seek", function(event) {
@@ -488,9 +597,30 @@
 			this.hyperlapse.load();
 		}.bind(this));
 
+		this.hyperlapse.addEventListener("loadready", function(event) {
+			this.setRouteControlsEnabled(true);
+			this.setStatus("Ready. Click play to start while the remaining frames continue loading.");
+			this.configureTimeline();
+			this.setPlayerOverlay("ready", "Ready. Click play to start.");
+			this.updateDownloadAvailability();
+		}.bind(this));
+
 		this.hyperlapse.addEventListener("loadprogress", function(event) {
-			this.setStatus("Loading frame " + event.position + " of " + this.hyperlapse.length() + "...");
-			this.setPlayerOverlay("loading", "Loading frame " + event.position + " of " + this.hyperlapse.length() + "...");
+			var playable = this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : 0;
+			this.setStatus("Loading frame " + event.position + " of " + this.hyperlapse.length() + (playable ? " (" + playable + " playable)." : "..."));
+			if (!playable) {
+				this.setPlayerOverlay("loading", "Loading frame " + event.position + " of " + this.hyperlapse.length() + "...");
+			}
+			this.configureTimeline();
+			this.updateDownloadAvailability();
+		}.bind(this));
+
+		this.hyperlapse.addEventListener("loadwarning", function(event) {
+			this.setStatus((event && event.message ? event.message : "A Street View frame is temporarily unavailable.") + " Continuing with a placeholder frame.");
+		}.bind(this));
+
+		this.hyperlapse.addEventListener("maptilesquota", function(event) {
+			this.updateMapTilesQuotaStatus(event.state);
 		}.bind(this));
 
 		this.hyperlapse.addEventListener("loadcomplete", function() {
@@ -498,7 +628,10 @@
 			this.setRouteControlsEnabled(true);
 			this.setStatus("Ready. Click play to start the demo route.");
 			this.configureTimeline();
-			this.setPlayerOverlay("ready", "Ready. Click play to start.");
+			if (!this.hyperlapse.isPlaying()) {
+				this.setPlayerOverlay("ready", "Ready. Click play to start.");
+			}
+			this.updateDownloadAvailability();
 		}.bind(this));
 
 		this.hyperlapse.addEventListener("play", function() {
@@ -506,8 +639,22 @@
 		}.bind(this));
 
 		this.hyperlapse.addEventListener("pause", function() {
-			if (this.hyperlapse.isLoading()) return;
-			this.setPlayerOverlay(this.hyperlapse.length() ? "paused" : "loading", this.hyperlapse.length() ? "Paused" : "Loading route...");
+			var playable = this.hyperlapse.loadedLength ? this.hyperlapse.loadedLength() : this.hyperlapse.length();
+			this.setPlayerOverlay(playable ? "paused" : "loading", playable ? "Paused" : "Loading route...");
+		}.bind(this));
+
+		this.hyperlapse.addEventListener("recordstart", function() {
+			this.updateDownloadAvailability();
+		}.bind(this));
+
+		this.hyperlapse.addEventListener("recordcomplete", function() {
+			var filename = this.pendingDownloadName;
+			this.pendingDownloadName = null;
+			if (filename) {
+				this.hyperlapse.downloadRecording(filename);
+				this.setStatus("Video downloaded.");
+			}
+			this.updateDownloadAvailability();
 		}.bind(this));
 	};
 
@@ -536,10 +683,21 @@
 	};
 
 	DemoRouteApp.prototype.bindControls = function() {
+		var playerMenu = byId("player-menu");
+		var playerMenuButton = byId("player-menu-button");
+
 		byId("play").onclick = function() { this.hyperlapse.playForward(); }.bind(this);
 		byId("reverse").onclick = function() { this.hyperlapse.playReverse(); }.bind(this);
 		byId("pause").onclick = function() { this.hyperlapse.pause(); }.bind(this);
 		byId("player-toggle").onclick = function() { this.togglePlayer(); }.bind(this);
+		playerMenuButton.onclick = function(event) {
+			event.stopPropagation();
+			this.setPlayerMenuOpen(!this.isPlayerMenuOpen());
+		}.bind(this);
+		byId("download-video").onclick = function() {
+			this.setPlayerMenuOpen(false);
+			this.downloadVideo();
+		}.bind(this);
 		byId("next").onclick = function() { this.hyperlapse.next(); }.bind(this);
 		byId("prev").onclick = function() { this.hyperlapse.prev(); }.bind(this);
 		byId("run-prompt").onclick = function() { this.runPromptPlan(); }.bind(this);
@@ -551,6 +709,18 @@
 		byId("look-down").onclick = function() { this.setFreeLook(0, 12); }.bind(this);
 		byId("voice-start").onclick = function() { this.voice.start(); }.bind(this);
 		byId("voice-stop").onclick = function() { this.voice.stop(); }.bind(this);
+
+		document.addEventListener("click", function(event) {
+			if (!this.isPlayerMenuOpen() || (playerMenu && playerMenu.contains(event.target))) return;
+			this.setPlayerMenuOpen(false);
+		}.bind(this));
+
+		document.addEventListener("keydown", function(event) {
+			if (event.key === "Escape" && this.isPlayerMenuOpen()) {
+				this.setPlayerMenuOpen(false);
+				playerMenuButton.focus();
+			}
+		}.bind(this));
 
 		byId("travel-mode").onchange = function(event) {
 			var defaults = this.getModeDefaults(event.target.value);
@@ -596,7 +766,7 @@
 		byId("timeline").oninput = function(event) {
 			this.seeking = true;
 			this.seekTo(event.target.value);
-			byId("frame-readout").textContent = this.hyperlapse.length() ? (Number(event.target.value) + 1) + " / " + this.hyperlapse.length() : "0 / 0";
+			this.updateTimeline(Number(event.target.value));
 		}.bind(this);
 
 		byId("timeline").onchange = function(event) {
@@ -713,6 +883,9 @@
 	};
 
 	DemoRouteApp.prototype.load = function(plan) {
+		if (this.hyperlapse && this.hyperlapse.getMapTilesQuota) {
+			this.updateMapTilesQuotaStatus(this.hyperlapse.getMapTilesQuota());
+		}
 		if (plan) {
 			this.applyPlanToControls(plan);
 			this.updateSpeedLabel();

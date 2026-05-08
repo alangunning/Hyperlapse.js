@@ -134,7 +134,9 @@ var Hyperlapse = function(container, params) {
 		_lat = 0, _lon = 0,
 		_position_x = 0, _position_y = 0,
 		_is_playing = false, _is_loading = false,
+		_is_animating = false,
 		_point_index = 0,
+		_load_index = 0,
 		_origin_heading = 0, _origin_pitch = 0,
 		_forward = true,
 		_lookat_heading = 0, _lookat_elevation = 0,
@@ -144,6 +146,7 @@ var Hyperlapse = function(container, params) {
 		_ctime = Date.now(),
 		_ptime = 0, _dtime = 0,
 		_prev_pano_id = null,
+		_last_good_image = null,
 		_raw_points = [], _h_points = [],
 		_is_recording = false,
 		_recording_chunks = [],
@@ -261,6 +264,8 @@ var Hyperlapse = function(container, params) {
 		zoom: _zoom,
 		apiKey: _params.streetViewApiKey || _params.googleMapsApiKey || _params.apiKey,
 		session: _params.streetViewSession,
+		staticBaseUrl: _params.streetViewStaticBaseUrl,
+		imageSourceMode: _params.streetViewSourceMode,
 		language: _params.language,
 		region: _params.region,
 		radius: _params.radius
@@ -268,21 +273,61 @@ var Hyperlapse = function(container, params) {
 	_loader.onError = function(message) {
 		handleError({message:message});
 	};
+	_loader.onPanoramaPlaceholder = function(event) {
+		emit("loadwarning", { message:event && event.message ? event.message : "Street View frame unavailable; using placeholder." });
+	};
+	_loader.onQuotaUpdate = function(state) {
+		emit("maptilesquota", { state: state });
+	};
+	_loader.onPanoramaFallback = function(event) {
+		emit("imagerysource", {
+			source: event && event.sourceMode === "static" ? "static" : "static-fallback",
+			message: event && event.message ? event.message : "Using Street View Static imagery."
+		});
+	};
+
+	var loadedLength = function() {
+		var count = 0;
+		while (count < _h_points.length && _h_points[count].image) {
+			count++;
+		}
+		return count;
+	};
 
 	_loader.onPanoramaLoad = function() {
 		var canvas = document.createElement("canvas");
 		var context = canvas.getContext('2d');
 		canvas.setAttribute('width',this.canvas.width);
 		canvas.setAttribute('height',this.canvas.height);
-		context.drawImage(this.canvas, 0, 0);
+		if (this.placeholder && _last_good_image) {
+			canvas.setAttribute('width',_last_good_image.width);
+			canvas.setAttribute('height',_last_good_image.height);
+			context = canvas.getContext('2d');
+			context.drawImage(_last_good_image, 0, 0);
+		} else {
+			context.drawImage(this.canvas, 0, 0);
+		}
 
-		_h_points[_point_index].image = canvas;
+		_h_points[_load_index].image = canvas;
+		_h_points[_load_index].placeholder = !!this.placeholder;
+		_h_points[_load_index].staticFallback = !!this.staticFallback;
+		_h_points[_load_index].staticOnly = !!this.staticOnly;
+		if (!this.placeholder) {
+			_last_good_image = canvas;
+		}
 
-		if(++_point_index != _h_points.length) {
-			handleLoadProgress( {position:_point_index} );
+		if(_load_index === 0) {
+			_point_index = 0;
+			drawMaterial();
+			startAnimation();
+			emit("loadready", {position:0, loaded:loadedLength(), total:_h_points.length});
+		}
+
+		if(++_load_index != _h_points.length) {
+			handleLoadProgress( {position:_load_index, loaded:loadedLength(), total:_h_points.length} );
 
 			if(!_cancel_load) {
-				_loader.composePanorama( _h_points[_point_index].pano_id );
+				_loader.composePanorama( _h_points[_load_index].pano_id );
 			} else {
 				handleLoadCanceled( {} );
 			}
@@ -313,10 +358,10 @@ var Hyperlapse = function(container, params) {
 	 */
 	var handleLoadComplete = function (e) {
 		_is_loading = false;
-		_point_index = 0;
 
-		drawMaterial();
-		animate();
+		if (_h_points[_point_index] && _h_points[_point_index].image) {
+			drawMaterial();
+		}
 
 		emit("loadcomplete", e, "onLoadComplete");
 	};
@@ -500,6 +545,9 @@ var Hyperlapse = function(container, params) {
 	};
 
 	var drawMaterial = function() {
+		if (!_h_points[_point_index] || !_h_points[_point_index].image) {
+			return;
+		}
 		if (_mesh.material.map && _mesh.material.map.dispose) {
 			_mesh.material.map.dispose();
 		}
@@ -512,8 +560,9 @@ var Hyperlapse = function(container, params) {
 		_origin_heading = _h_points[_point_index].heading;
 		_origin_pitch = _h_points[_point_index].pitch;
 
-		if(self.follow_route && _h_points.length > 1) {
-			var route_target_index = (_point_index + 1 < _h_points.length) ? _point_index + 1 : _point_index - 1;
+		if(self.follow_route && loadedLength() > 1) {
+			var playable_length = loadedLength();
+			var route_target_index = (_point_index + 1 < playable_length) ? _point_index + 1 : _point_index - 1;
 			if (route_target_index >= 0) {
 				_lookat_heading = google.maps.geometry.spherical.computeHeading(
 					_h_points[_point_index].location,
@@ -545,7 +594,7 @@ var Hyperlapse = function(container, params) {
 	};
 
 	var render = function() {
-		if(!_is_loading && self.length()>0) {
+		if(loadedLength()>0 && _h_points[_point_index] && _h_points[_point_index].image) {
 			var t = _point_index/(self.length());
 
 			var o_x = self.position.x + (self.offset.x * t);
@@ -578,6 +627,12 @@ var Hyperlapse = function(container, params) {
 		}
 	};
 
+	var startAnimation = function() {
+		if (_is_animating) return;
+		_is_animating = true;
+		requestAnimationFrame( animate );
+	};
+
 	var animate = function() {
 		var ptime = _ctime;
 		_ctime = Date.now();
@@ -586,19 +641,25 @@ var Hyperlapse = function(container, params) {
 			if(_is_playing) loop();
 			_dtime = 0;
 		}
-
 		requestAnimationFrame( animate );
 		render();
 	};
 
 	// animates the playhead forward or backward depending on direction
 	var loop = function() {
+		var playable_length = loadedLength();
+		if (!playable_length) return;
+		if (_point_index >= playable_length) {
+			_point_index = playable_length - 1;
+		}
 		drawMaterial();
 
 		if(_forward) {
-			if(++_point_index == _h_points.length) {
-				_point_index = _h_points.length-1;
-				_forward = !_forward;
+			if(++_point_index >= playable_length) {
+				_point_index = playable_length - 1;
+				if (!_is_loading) {
+					_forward = !_forward;
+				}
 			}
 		} else {
 			if(--_point_index == -1) {
@@ -722,6 +783,11 @@ var Hyperlapse = function(container, params) {
 	this.length = function() { return _h_points.length; };
 
 	/**
+	 * @returns {Number}
+	 */
+	this.loadedLength = function() { return loadedLength(); };
+
+	/**
 	 * @param {Number} v
 	 */
 	this.setPitch = function(v) { _position_y = v; };
@@ -780,6 +846,24 @@ var Hyperlapse = function(container, params) {
 	 * @returns {Number}
 	 */
 	this.getTileZoom = function() { return _zoom; };
+
+	this.setStreetViewSourceMode = function(mode) {
+		if (_loader && _loader.setImageSourceMode) {
+			_loader.setImageSourceMode(mode);
+		}
+		emit("imagerysource", {
+			source: mode === "static" ? "static" : mode === "tiles" ? "tiles" : "auto",
+			message: "Street View source mode changed."
+		});
+	};
+
+	this.getStreetViewSourceMode = function() {
+		return _loader && _loader.getImageSourceMode ? _loader.getImageSourceMode() : "auto";
+	};
+
+	this.getMapTilesQuota = function() {
+		return _loader && _loader.getQuotaState ? _loader.getQuotaState() : null;
+	};
 
 	/**
 	 * Render the current camera view immediately, useful before capturing
@@ -901,6 +985,8 @@ var Hyperlapse = function(container, params) {
 		_position_y = 0;
 
 		_point_index = 0;
+		_load_index = 0;
+		_last_good_image = null;
 		_origin_heading = 0;
 		_origin_pitch = 0;
 
@@ -944,8 +1030,8 @@ var Hyperlapse = function(container, params) {
 		_is_loading = true;
 		self.pause();
 		_cancel_load = false;
-		_point_index = 0;
-		_loader.composePanorama(_h_points[_point_index].pano_id);
+		_load_index = 0;
+		_loader.composePanorama(_h_points[_load_index].pano_id);
 	};
 
 	/**
@@ -969,7 +1055,7 @@ var Hyperlapse = function(container, params) {
 	 * @fires Hyperlapse#onPlay
 	 */
 	this.play = function() {
-		if(!_is_loading) {
+		if(loadedLength() > 0) {
 			_is_playing = true;
 			handlePlay({});
 		}
@@ -1006,9 +1092,10 @@ var Hyperlapse = function(container, params) {
 	 * @fires Hyperlapse#onFrame
 	 */
 	this.seek = function(position) {
-		if (!_h_points.length) return false;
+		var playable_length = loadedLength();
+		if (!playable_length) return false;
 		self.pause();
-		_point_index = Math.max(0, Math.min(_h_points.length - 1, Math.round(position)));
+		_point_index = Math.max(0, Math.min(playable_length - 1, Math.round(position)));
 		drawMaterial();
 		emit("seek", frameEvent("seek"));
 		return true;
@@ -1131,9 +1218,10 @@ var Hyperlapse = function(container, params) {
 	 * @fires Hyperlapse#onFrame
 	 */
 	this.next = function() {
+		var playable_length = loadedLength();
 		self.pause();
 
-		if(_point_index + 1 < _h_points.length) {
+		if(_point_index + 1 < playable_length) {
 			_point_index++;
 			drawMaterial();
 			emit("seek", frameEvent("next"));
