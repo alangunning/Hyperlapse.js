@@ -16,6 +16,12 @@ This library was written to create dynamic hyper-lapse (time-lapse with movement
 
 [Simple example](http://tllabs.io/hyperlapse/examples/simple.html)
 
+Local clone demo route:
+
+- Open `examples/demo-route.html?key=YOUR_GOOGLE_MAPS_API_KEY`
+- Includes a ready-to-run Dublin route: 3Arena -> Gibson Hotel -> Luas Red Line segment
+- Includes a prompt box + `JourneyOrchestrator` + voice controls for play/pause/next/prev/reroute commands
+
 ```js
 var hyperlapse = new Hyperlapse(document.getElementById('pano'), {
 	lookat: new google.maps.LatLng(37.81409525128964,-122.4775045005249),
@@ -36,6 +42,11 @@ hyperlapse.onLoadComplete = function(e) {
 	hyperlapse.play();
 };
 
+hyperlapse.onRecordComplete = function(e) {
+	// Save short completed journey capture
+	hyperlapse.downloadRecording("my-hyperlapse.webm");
+};
+
 // Google Maps API stuff here...
 var directions_service = new google.maps.DirectionsService();
 
@@ -54,7 +65,24 @@ directions_service.route(route.request, function(response, status) {
 		console.log(status);
 	}
 });
+
+// start recording before playback (browser must support MediaRecorder)
+hyperlapse.startRecording({ frameRate: 30 });
+
+// stop recording whenever the short clip is complete
+// hyperlapse.stopRecording();
 ```
+
+## Recording export
+
+Hyperlapse.js now includes simple recording helpers for exporting a short clip:
+
+- `startRecording({ mimeType, videoBitsPerSecond, frameRate })`
+- `stopRecording()`
+- `getRecording()` returns the generated `Blob` (or `null`)
+- `downloadRecording(filename)` triggers a `.webm` download
+
+Recording uses `MediaRecorder` + `canvas.captureStream()`, so support depends on the browser.
 
 ## Dependencies
 
@@ -66,6 +94,14 @@ directions_service.route(route.request, function(response, status) {
 ## API Docs 
   
 [API Documentation](http://tllabs.io/hyperlapse/docs/Hyperlapse.html)
+
+## Modernization and orchestration resources
+
+- `MODERNIZATION_REVIEW.md` - architecture and migration strategy.
+- `DEPENDENCY_MODERNIZATION_PLAN.md` - dependency upgrade and replacement sequence.
+- `VOICE_MODE_PLAN.md` - OpenAI voice mode and live transcription rollout plan.
+- `.codex-plugin/plugin.json` - Codex plugin scaffold for orchestration.
+- `skills/hyperlapse-orchestrator/SKILL.md` - Codex skill for route/planning/prefetch orchestration tasks.
   
 
 ## License
@@ -91,4 +127,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-

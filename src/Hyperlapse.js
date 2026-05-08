@@ -140,7 +140,12 @@ var Hyperlapse = function(container, params) {
 		_ctime = Date.now(),
 		_ptime = 0, _dtime = 0,
 		_prev_pano_id = null,
-		_raw_points = [], _h_points = [];
+		_raw_points = [], _h_points = [],
+		_is_recording = false,
+		_recording_chunks = [],
+		_recording_mime_type = "video/webm",
+		_recording_blob = null,
+		_recorder = null;
 
 	/**
 	 * @event Hyperlapse#onError
@@ -166,6 +171,21 @@ var Hyperlapse = function(container, params) {
 	 * @event Hyperlapse#onPause
 	 */
 	var handlePause = function (e) { if (self.onPause) self.onPause(e); };
+
+	/**
+	 * @event Hyperlapse#onRecordStart
+	 */
+	var handleRecordStart = function (e) { if (self.onRecordStart) self.onRecordStart(e); };
+
+	/**
+	 * @event Hyperlapse#onRecordProgress
+	 */
+	var handleRecordProgress = function (e) { if (self.onRecordProgress) self.onRecordProgress(e); };
+
+	/**
+	 * @event Hyperlapse#onRecordComplete
+	 */
+	var handleRecordComplete = function (e) { if (self.onRecordComplete) self.onRecordComplete(e); };
 
 	var _elevator = new google.maps.ElevationService();
 	var _streetview_service = new google.maps.StreetViewService();
@@ -763,6 +783,118 @@ var Hyperlapse = function(container, params) {
 	this.pause = function() {
 		_is_playing = false;
 		handlePause({});
+	};
+
+	/**
+	 * @returns {boolean}
+	 */
+	this.isRecording = function() { return _is_recording; };
+
+	/**
+	 * @returns {Blob|null}
+	 */
+	this.getRecording = function() { return _recording_blob; };
+
+	/**
+	 * @param {Object} params
+	 * @param {String} [params.mimeType="video/webm"]
+	 * @param {Number} [params.videoBitsPerSecond]
+	 * @param {Number} [params.frameRate=30]
+	 */
+	this.startRecording = function(params) {
+		var p = params || {};
+		var frame_rate = p.frameRate || 30;
+		var options = {};
+
+		if (typeof window.MediaRecorder === "undefined") {
+			handleError({message:"Recording is not supported in this browser."});
+			return false;
+		}
+
+		if (_is_recording) {
+			return false;
+		}
+
+		if (!_renderer || !_renderer.domElement || !_renderer.domElement.captureStream) {
+			handleError({message:"Canvas captureStream is not available."});
+			return false;
+		}
+
+		_recording_chunks = [];
+		_recording_blob = null;
+		_recording_mime_type = p.mimeType || _recording_mime_type;
+		options.mimeType = _recording_mime_type;
+
+		if (p.videoBitsPerSecond) {
+			options.videoBitsPerSecond = p.videoBitsPerSecond;
+		}
+
+		try {
+			_recorder = new MediaRecorder(_renderer.domElement.captureStream(frame_rate), options);
+		} catch(e) {
+			handleError({message:"Unable to create MediaRecorder with the given options."});
+			return false;
+		}
+
+		_recorder.ondataavailable = function(event) {
+			if (event.data && event.data.size > 0) {
+				_recording_chunks.push(event.data);
+				handleRecordProgress({size:event.data.size});
+			}
+		};
+
+		_recorder.onstop = function() {
+			_is_recording = false;
+			_recording_blob = new Blob(_recording_chunks, {type:_recording_mime_type});
+			handleRecordComplete({blob:_recording_blob, mimeType:_recording_mime_type});
+		};
+
+		_recorder.onerror = function(event) {
+			_is_recording = false;
+			handleError({message: event && event.error ? event.error.message : "Recording failed."});
+		};
+
+		_recorder.start(500);
+		_is_recording = true;
+		handleRecordStart({mimeType:_recording_mime_type});
+		return true;
+	};
+
+	/**
+	 * @returns {boolean}
+	 */
+	this.stopRecording = function() {
+		if (!_is_recording || !_recorder) {
+			return false;
+		}
+
+		_recorder.stop();
+		return true;
+	};
+
+	/**
+	 * @param {String} [filename="hyperlapse-recording.webm"]
+	 * @returns {boolean}
+	 */
+	this.downloadRecording = function(filename) {
+		var name = filename || "hyperlapse-recording.webm";
+		var link;
+		var href;
+
+		if (!_recording_blob) {
+			return false;
+		}
+
+		href = window.URL.createObjectURL(_recording_blob);
+		link = document.createElement("a");
+		link.style.display = "none";
+		link.href = href;
+		link.download = name;
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+		window.URL.revokeObjectURL(href);
+		return true;
 	};
 
 	/**

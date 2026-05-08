@@ -1,0 +1,19 @@
+{
+  "name": "hyperlapse-navigator",
+  "version": "0.1.0",
+  "description": "Codex plugin entrypoint for Hyperlapse.js navigation orchestration, route generation, and Street View prefetch workflows.",
+  "skills": [
+    {
+      "name": "hyperlapse-orchestrator",
+      "path": "skills/hyperlapse-orchestrator/SKILL.md"
+    }
+  ],
+  "entrypoints": {
+    "default_skill": "hyperlapse-orchestrator"
+  },
+  "metadata": {
+    "repository": "Hyperlapse.js",
+    "maintainer": "local",
+    "status": "experimental"
+  }
+}
