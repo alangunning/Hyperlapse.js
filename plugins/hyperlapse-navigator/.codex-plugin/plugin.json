@@ -1,0 +1,42 @@
+{
+  "name": "hyperlapse-navigator",
+  "version": "0.1.1",
+  "description": "Codex plugin for turning route prompts and journey configurations into playable Hyperlapse.js Street View experiences.",
+  "author": {
+    "name": "Airnub Labs",
+    "email": "local@example.com",
+    "url": "https://github.com/Airnub"
+  },
+  "homepage": "https://github.com/Airnub/Hyperlapse.js",
+  "repository": "https://github.com/Airnub/Hyperlapse.js",
+  "license": "MIT",
+  "keywords": [
+    "hyperlapse",
+    "street-view",
+    "routes",
+    "google-maps",
+    "journey-orchestration"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hyperlapse Navigator",
+    "shortDescription": "Build playable Street View hyperlapses",
+    "longDescription": "Turns natural-language route, role, speed, quality, and camera-direction prompts into validated Hyperlapse.js plans, runtime configuration, and browser-tested playable Street View sequences.",
+    "developerName": "Airnub Labs",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "Browser"
+    ],
+    "websiteURL": "https://github.com/Airnub/Hyperlapse.js",
+    "privacyPolicyURL": "https://github.com/Airnub/Hyperlapse.js",
+    "termsOfServiceURL": "https://github.com/Airnub/Hyperlapse.js",
+    "defaultPrompt": [
+      "Use $hyperlapse-orchestrator to turn this route prompt into a playable demo.",
+      "Use $hyperlapse-orchestrator to add camera directions to the route.",
+      "Use $hyperlapse-orchestrator to validate the hyperlapse in Chrome."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

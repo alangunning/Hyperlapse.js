@@ -1,0 +1,64 @@
+{
+  "origin": {
+    "lat": 53.347875,
+    "lng": -6.228956
+  },
+  "destination": {
+    "lat": 53.349805,
+    "lng": -6.26031
+  },
+  "travelMode": "DRIVING",
+  "viewMode": "follow",
+  "motionQuality": "cinematic",
+  "speedMetersPerSecond": 9,
+  "distance_between_points": 2,
+  "max_points": 28,
+  "streetViewTileZoom": 0,
+  "millis": 700,
+  "prompt": "start at the 3Arena in Dublin and travel along the quays to O'Connell Street",
+  "waypoints": [
+    {
+      "lat": 53.34762,
+      "lng": -6.2407,
+      "purpose": "keep route beside the Liffey through the Docklands",
+      "viewHint": "look forward along the quays toward Samuel Beckett Bridge",
+      "routeVia": true
+    },
+    {
+      "lat": 53.34805,
+      "lng": -6.252,
+      "purpose": "historic civic landmark camera target",
+      "viewHint": "look toward the Custom House and Famine Memorial",
+      "routeVia": false
+    }
+  ],
+  "cameraCues": [
+    {
+      "from": 0,
+      "to": 0.45,
+      "label": "Dublin Docklands and Samuel Beckett Bridge",
+      "lookat": {
+        "lat": 53.34795,
+        "lng": -6.2391
+      }
+    },
+    {
+      "from": 0.45,
+      "to": 0.78,
+      "label": "Custom House and Famine Memorial",
+      "lookat": {
+        "lat": 53.34805,
+        "lng": -6.252
+      }
+    },
+    {
+      "from": 0.78,
+      "to": 1,
+      "label": "O'Connell Street",
+      "lookat": {
+        "lat": 53.349805,
+        "lng": -6.26031
+      }
+    }
+  ]
+}

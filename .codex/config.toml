@@ -1,0 +1,11 @@
+approval_policy = "never"
+
+[sandbox_workspace_write]
+network_access = true
+
+[plugins."hyperlapse-navigator@hyperlapse-local"]
+enabled = true
+
+[marketplaces.hyperlapse-local]
+source_type = "local"
+source = "/Users/alangunning/Projects-Airnub-Labs/Hyperlapse.js"

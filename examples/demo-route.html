@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Hyperlapse Demo Route</title>
+	<style>
+		body { font-family: Arial, sans-serif; margin: 8px; color: #1f2328; overflow: hidden; }
+		main { max-width: 1440px; height: calc(100vh - 16px); }
+		.demo-shell { display: grid; grid-template-columns: minmax(320px, 960px) minmax(300px, 420px); gap: 14px; align-items: stretch; height: 100%; }
+		.viewer-column, .control-column { min-width: 0; min-height: 0; }
+		.viewer-column { display: flex; flex-direction: column; }
+		.control-column { max-height: 100%; overflow: auto; padding-right: 4px; }
+		#viewer-shell { position: relative; width: min(100%, 960px); height: min(54vw, calc(100vh - 250px), 540px); min-height: 240px; background: #111; }
+		#pano { width: 100%; height: 100%; background: #111; outline-offset: 3px; }
+		#pano canvas { display: block; width: 100% !important; height: 100% !important; }
+		#player-overlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: #fff; background: linear-gradient(180deg, rgba(0,0,0,0.2), rgba(0,0,0,0.45)); opacity: 1; transition: opacity 150ms ease; }
+		#player-overlay[data-state="playing"] { opacity: 0; }
+		#viewer-shell:hover #player-overlay[data-state="playing"], #player-overlay:focus-within { opacity: 1; }
+		#player-overlay button { pointer-events: auto; width: 78px; height: 78px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.9); background: rgba(0,0,0,0.62); color: #fff; font-size: 34px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+		#player-overlay button:disabled { cursor: wait; opacity: 0.8; }
+		#player-overlay .spinner { width: 34px; height: 34px; border: 4px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 900ms linear infinite; }
+		#player-overlay[data-state="ready"] .spinner, #player-overlay[data-state="paused"] .spinner, #player-overlay[data-state="playing"] .spinner, #player-overlay[data-state="error"] .spinner { display: none; }
+		#player-overlay[data-state="loading"] .player-icon, #player-overlay[data-state="error"] .player-icon { display: none; }
+		#player-overlay .player-panel { display: grid; gap: 12px; justify-items: center; text-align: center; padding: 16px; }
+		#player-overlay .player-label { max-width: min(82vw, 520px); font-size: 14px; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+		#player-menu { position: absolute; right: 12px; bottom: 12px; z-index: 4; color: #fff; }
+		#player-menu-button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.75); background: rgba(0,0,0,0.58); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
+		#player-menu-panel { position: absolute; right: 0; bottom: 46px; min-width: 190px; display: none; padding: 6px; background: rgba(20,20,20,0.94); border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+		#player-menu[aria-expanded="true"] #player-menu-panel { display: grid; gap: 4px; }
+		#download-video { width: 100%; border: 0; background: transparent; color: #fff; border-radius: 6px; padding: 9px 10px; cursor: pointer; text-align: left; font: inherit; }
+		#download-video:hover:not(:disabled), #download-video:focus-visible { background: rgba(255,255,255,0.12); }
+		#download-video:disabled { cursor: not-allowed; opacity: 0.55; }
+		@keyframes spin { to { transform: rotate(360deg); } }
+		#route-map { width: min(100%, 960px); flex: 0 0 clamp(140px, 22vh, 220px); margin-top: 10px; border: 1px solid #d0d7de; box-sizing: border-box; }
+		#status { margin: 8px 0 14px; color: #333; }
+		#quota-state { margin: -8px 0 12px; color: #5f4500; font-size: 13px; }
+		#source-state { margin: -6px 0 12px; color: #374151; font-size: 13px; }
+		#controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+		#settings { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin: 12px 0; }
+		#settings label { display: grid; gap: 4px; font-size: 13px; color: #333; }
+		#settings select, #settings input { font: inherit; }
+		#timeline-controls { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin: 12px 0; }
+		#timeline { width: 100%; }
+		#look-pad { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 36px); gap: 4px; align-items: center; justify-items: center; }
+		#look-pad button { width: 40px; height: 36px; margin: 0; font-size: 18px; }
+		#look-up { grid-column: 2; grid-row: 1; }
+		#look-left { grid-column: 1; grid-row: 2; }
+		#reset-look { grid-column: 2; grid-row: 2; }
+		#look-right { grid-column: 3; grid-row: 2; }
+		#look-down { grid-column: 2; grid-row: 3; }
+		#look-readout { font-size: 12px; color: #444; min-width: 110px; }
+		#guide-form { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+		#guide-prompt { flex: 1; font: inherit; padding: 6px; }
+		#prompt { width: min(720px, 100%); box-sizing: border-box; }
+		#mode-warning { color: #7a4b00; margin: 4px 0 10px; }
+		code { background: #f3f3f3; padding: 2px 4px; }
+		@media (max-width: 900px) {
+			body { overflow: auto; }
+			main { height: auto; }
+			.demo-shell { grid-template-columns: 1fr; }
+			.control-column { max-height: none; overflow: visible; }
+			#viewer-shell { width: 100%; height: auto; min-height: 0; aspect-ratio: 16 / 9; }
+			#route-map { width: 100%; flex-basis: 220px; height: 220px; }
+			#guide-form { display: grid; }
+		}
+	</style>
+	<script src="js/three.min.js"></script>
+	<script src="js/RoutesAdapter.js"></script>
+	<script src="../src/StreetViewTileLoader.js"></script>
+	<script src="js/TourGuide.js"></script>
+	<script src="js/JourneyOrchestrator.js"></script>
+	<script src="js/VoiceOrchestrator.js"></script>
+	<script src="js/OpenAIIntentInterpreter.js"></script>
+	<script src="../src/Hyperlapse.js"></script>
+	<script src="js/DemoRouteApp.js"></script>
+	<script>
+		function getQueryParam(name) {
+			var params = new URLSearchParams(window.location.search);
+			return params.get(name);
+		}
+
+		function setStatus(message) {
+			document.getElementById("status").innerHTML = message;
+		}
+
+		function asLatLng(point) {
+			if (!point) return null;
+			if (typeof point.lat === "function") return point;
+			return new google.maps.LatLng(point.lat, point.lng);
+		}
+
+		function decodePlanParam(value) {
+			if (!value) return null;
+			return JSON.parse(decodeURIComponent(escape(window.atob(value))));
+		}
+
+		function loadInitialPlan() {
+			var encodedPlan = getQueryParam("plan");
+			var planUrl = getQueryParam("planUrl");
+
+			if (encodedPlan) {
+				return Promise.resolve(decodePlanParam(encodedPlan));
+			}
+
+			if (planUrl) {
+				return fetchPlanUrl(planUrl);
+			}
+
+			return Promise.resolve(null);
+		}
+
+		function fetchPlanUrl(planUrl) {
+			var fallbackUrl = null;
+
+			if (planUrl.indexOf("/") !== 0 && planUrl.indexOf("http://") !== 0 && planUrl.indexOf("https://") !== 0) {
+				fallbackUrl = "../" + planUrl;
+			}
+
+			return fetch(planUrl).then(function(response) {
+				if (response.ok) return response.json();
+				if (!fallbackUrl) {
+					throw new Error("Could not load plan file: HTTP " + response.status);
+				}
+				return fetch(fallbackUrl).then(function(fallbackResponse) {
+					if (!fallbackResponse.ok) {
+						throw new Error("Could not load plan file: HTTP " + response.status + " then HTTP " + fallbackResponse.status);
+					}
+					return fallbackResponse.json();
+				});
+			});
+		}
+
+		function loadGoogleMaps(callback) {
+			var key = getQueryParam("key");
+			var script = document.createElement("script");
+			var settled = false;
+
+			if (!key) {
+				setStatus("Missing API key. Open this page with <code>?key=YOUR_GOOGLE_MAPS_API_KEY</code>.");
+				return;
+			}
+
+			window.gm_authFailure = function() {
+				settled = true;
+				setStatus("Google Maps authentication failed. Check the API key, allowed referrers, billing, and enabled APIs.");
+			};
+			window.__hyperlapseDemoInit = function() {
+				settled = true;
+				try {
+					callback();
+				} catch (error) {
+					setStatus("Demo initialization failed: " + error.message);
+					throw error;
+				}
+			};
+			script.onerror = function() {
+				settled = true;
+				setStatus("Could not load Google Maps JavaScript API. Check network access, API key restrictions, and enabled APIs.");
+			};
+			script.src = "https://maps.googleapis.com/maps/api/js?key=" +
+				encodeURIComponent(key) + "&v=weekly&loading=async&libraries=geometry,places&callback=__hyperlapseDemoInit";
+			script.async = true;
+			document.head.appendChild(script);
+			setTimeout(function() {
+				if (!settled && !(window.google && window.google.maps)) {
+					setStatus("Still waiting for Google Maps JavaScript API. Check the browser console/network panel for a blocked or rejected maps.googleapis.com request.");
+				}
+			}, 12000);
+		}
+
+		function init() {
+			var app = new DemoRouteApp({ apiKey: getQueryParam("key") });
+			window.hyperlapseDemoApp = app;
+			loadInitialPlan().then(function(plan) {
+				app.load(plan);
+			}).catch(function(error) {
+				app.setStatus("Error: " + error.message);
+			});
+		}
+
+		window.onload = function () {
+			setStatus("Initializing...");
+			loadGoogleMaps(init);
+		};
+	</script>
+</head>
+	<body>
+	<main>
+		<div class="demo-shell">
+			<div class="viewer-column">
+				<div id="viewer-shell">
+					<div id="pano" tabindex="0" role="img" aria-label="Street View hyperlapse viewer. Use arrow keys to look around, Home to reset view, and Space to play or pause."></div>
+					<div id="player-overlay" data-state="loading" aria-live="polite">
+						<div class="player-panel">
+							<button id="player-toggle" type="button" aria-label="Play hyperlapse" disabled><span class="player-icon">▶</span><span class="spinner" aria-hidden="true"></span></button>
+							<div id="player-overlay-label" class="player-label">Loading route...</div>
+						</div>
+					</div>
+					<div id="player-menu" aria-expanded="false">
+						<button id="player-menu-button" type="button" aria-label="Open player menu" aria-haspopup="true" aria-expanded="false" aria-controls="player-menu-panel">⋮</button>
+						<div id="player-menu-panel" role="menu" aria-label="Player menu">
+							<button id="download-video" type="button" role="menuitem" aria-label="Record and download hyperlapse video" disabled>Download video</button>
+						</div>
+					</div>
+				</div>
+				<div id="route-map" aria-label="Map showing the active Google directions route and current Hyperlapse position"></div>
+			</div>
+			<div class="control-column" aria-label="Playback and guide controls">
+				<h1>Hyperlapse Demo Route</h1>
+				<p>Clone, open this file, and pass your API key in the URL: <code>examples/demo-route.html?key=YOUR_GOOGLE_MAPS_API_KEY</code>.</p>
+				<p>Try prompt: <code>start at the 3Arena in Dublin and travel along the quays to O'Connell Street</code></p>
+				<div>
+					<label for="prompt">Route prompt</label>
+					<input id="prompt" value="start at the 3Arena in Dublin and travel along the quays to O'Connell Street" />
+					<button id="run-prompt" type="button">Run Prompt</button>
+				</div>
+				<p><strong>Orchestrator state:</strong> <span id="route-state">IDLE</span></p>
+				<div id="status" role="status" aria-live="polite"></div>
+				<div id="quota-state" role="status" aria-live="polite"></div>
+				<div id="source-state" role="status" aria-live="polite"></div>
+				<div id="settings">
+					<label for="travel-mode">Travel mode
+						<select id="travel-mode">
+							<option value="DRIVING">Drive</option>
+							<option value="BICYCLING">Cycle</option>
+							<option value="WALKING">Walk</option>
+						</select>
+					</label>
+					<label for="view-mode">View
+						<select id="view-mode">
+							<option value="follow">Follow route</option>
+							<option value="lookat">Look at waypoint</option>
+							<option value="free">Free look</option>
+						</select>
+					</label>
+					<label for="motion-quality">Motion quality
+						<select id="motion-quality">
+							<option value="balanced">Balanced</option>
+							<option value="cinematic">Cinematic</option>
+							<option value="low">Low frame rate</option>
+						</select>
+					</label>
+					<label for="distance-between-points">Point spacing <span id="distance-between-points-value"></span>
+						<input id="distance-between-points" type="range" min="0.5" max="30" step="0.5" value="2" />
+					</label>
+					<label for="tile-quality">Street View tiles
+						<select id="tile-quality">
+							<option value="0" selected>Fast</option>
+							<option value="1">Standard</option>
+							<option value="2">Sharp</option>
+							<option value="3">High</option>
+							<option value="4">Maximum</option>
+						</select>
+					</label>
+					<label for="streetview-source">Imagery source
+						<select id="streetview-source">
+							<option value="auto" selected>Auto fallback</option>
+							<option value="static">Static only</option>
+							<option value="tiles">Map Tiles only</option>
+						</select>
+					</label>
+					<label for="speed">Speed <span id="speed-value"></span>
+						<input id="speed" type="range" min="0.25" max="2.5" step="0.05" value="1" />
+					</label>
+					<div>
+						<button id="apply-route-settings" type="button" disabled>Apply Route Settings</button>
+						<div id="route-settings-state" role="status" aria-live="polite">Route settings applied.</div>
+					</div>
+					<div>
+						<div id="look-label">Look</div>
+						<div id="look-pad" role="group" aria-labelledby="look-label">
+							<button id="look-up" type="button" aria-label="Look up" title="Look up">↑</button>
+							<button id="look-left" type="button" aria-label="Look left" title="Look left">←</button>
+							<button id="reset-look" type="button" aria-label="Reset look direction" title="Reset look">•</button>
+							<button id="look-right" type="button" aria-label="Look right" title="Look right">→</button>
+							<button id="look-down" type="button" aria-label="Look down" title="Look down">↓</button>
+						</div>
+						<div id="look-readout" aria-live="polite">0deg, 0deg</div>
+					</div>
+				</div>
+				<div id="mode-warning"></div>
+				<div id="timeline-controls">
+					<label for="timeline">Timeline</label>
+					<input id="timeline" type="range" min="0" max="0" step="1" value="0" disabled aria-label="Timeline seek" />
+					<span id="frame-readout" aria-live="polite">0 / 0</span>
+				</div>
+				<div id="controls" role="group" aria-label="Playback controls">
+					<button id="play" type="button">Play</button>
+					<button id="reverse" type="button">Reverse</button>
+					<button id="pause" type="button">Pause</button>
+					<button id="prev" type="button">Prev</button>
+					<button id="next" type="button">Next</button>
+					<button id="voice-start" type="button">Start Voice</button>
+					<button id="voice-stop" type="button">Stop Voice</button>
+				</div>
+				<p><strong>Voice:</strong> <span id="voice-state">Idle</span></p>
+				<p><strong>Transcript:</strong> <span id="transcript"></span></p>
+				<form id="guide-form">
+					<label for="guide-prompt">Ask the guide</label>
+					<input id="guide-prompt" type="text" placeholder="What building am I looking at now?" autocomplete="off" />
+					<button type="submit">Ask</button>
+				</form>
+				<p><strong>Voice action:</strong> <span id="voice-action"></span></p>
+				<p><strong>Tour guide:</strong> <span id="tour-info"></span></p>
+			</div>
+		</div>
+	</main>
+</body>
+</html>
